@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import json
 import os
 
-TOKEN = "MTQ4MzU0OTc2NjA2NjYzNDg3NA.Gnw_L5.vy4tNrbSYG-k_rdeheCF2KxH55mKmTW54v_6TA"
+TOKEN = "TOKEN"
 
 # 🔥 CONFIG
 CANAL_ACTIVIDADES_ID = 1484284824448536649
