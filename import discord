@@ -1,0 +1,337 @@
+import discord
+from discord.ext import tasks, commands
+from discord.ui import View, Button, Modal, TextInput
+from datetime import datetime, timedelta
+import json
+import os
+
+TOKEN = "MTQ4MzU0OTc2NjA2NjYzNDg3NA.Gnw_L5.vy4tNrbSYG-k_rdeheCF2KxH55mKmTW54v_6TA"
+
+# 🔥 CONFIG
+CANAL_ACTIVIDADES_ID = 1484284824448536649
+CANAL_REGISTROS_ID = 1484380541217276074
+CATEGORIA_TICKETS_ID = 1484626162175971388
+
+STAFF_ROLES_IDS = [1484625695911972904]
+
+OFFSET = 3  # 🔥 AJUSTE HORARIO DEL JUEGO (IMPORTANTE)
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+COLOR = 0x00FFFF
+
+ultima_hora_enviada = None
+ultima_previa_enviada = None
+tickets_reclamados = {}
+
+# ================= JSON =================
+ARCHIVO = "registros.json"
+
+if os.path.exists(ARCHIVO):
+    with open(ARCHIVO, "r") as f:
+        data = json.load(f)
+else:
+    data = {"usuarios": {}, "inicio_semana": ""}
+
+registros_semana = data.get("usuarios", {})
+inicio_semana = data.get("inicio_semana", "")
+
+def guardar_datos():
+    with open(ARCHIVO, "w") as f:
+        json.dump({
+            "usuarios": registros_semana,
+            "inicio_semana": inicio_semana
+        }, f, indent=4)
+
+def check_reset_semanal():
+    global registros_semana, inicio_semana
+
+    hoy = datetime.now().strftime("%Y-%m-%d")
+
+    if inicio_semana == "":
+        inicio_semana = hoy
+        return
+
+    if (datetime.now() - datetime.strptime(inicio_semana, "%Y-%m-%d")).days >= 7:
+        registros_semana = {}
+        inicio_semana = hoy
+        guardar_datos()
+
+# ================= ACTIVIDADES =================
+actividades = [
+    {"hora": "00:00","nombre": "Bus Urbano (Ruta A)","recompensa": "$19000","imagen": "https://i.imgur.com/wDVTWcb.png"},
+    {"hora": "08:00","nombre": "Bus Interurbano (Ruta B)","recompensa": "$19150","imagen": "https://i.imgur.com/wDVTWcb.png"},
+    {"hora": "18:00","nombre": "Bus Interurbano (Ruta D)","recompensa": "$5000","imagen": "https://i.imgur.com/wDVTWcb.png"},
+
+    {"hora": "02:00","nombre": "Servicio de Taxi","recompensa": "$10100","imagen": "https://i.imgur.com/tpVta8A.png"},
+    {"hora": "05:00","nombre": "Servicio de Taxi","recompensa": "$10100","imagen": "https://i.imgur.com/tpVta8A.png"},
+    {"hora": "11:00","nombre": "Servicio de Taxi","recompensa": "$10100","imagen": "https://i.imgur.com/tpVta8A.png"},
+    {"hora": "14:00","nombre": "Servicio de Taxi","recompensa": "$10100","imagen": "https://i.imgur.com/tpVta8A.png"},
+    {"hora": "19:00","nombre": "Servicio de Taxi","recompensa": "$10100","imagen": "https://i.imgur.com/tpVta8A.png"},
+    {"hora": "21:00","nombre": "Servicio de Taxi","recompensa": "$10100","imagen": "https://i.imgur.com/tpVta8A.png"},
+
+    {"hora": "03:00","nombre": "Servicio de Mudanza","recompensa": "$13800","imagen": "https://i.imgur.com/7DfmxsN.png"},
+    {"hora": "07:00","nombre": "Servicio de Mudanza","recompensa": "$13800","imagen": "https://i.imgur.com/7DfmxsN.png"},
+    {"hora": "16:00","nombre": "Servicio de Mudanza","recompensa": "$13800","imagen": "https://i.imgur.com/7DfmxsN.png"},
+    {"hora": "20:00","nombre": "Servicio de Mudanza","recompensa": "$13800","imagen": "https://i.imgur.com/7DfmxsN.png"},
+    {"hora": "22:00","nombre": "Servicio de Mudanza","recompensa": "$13800","imagen": "https://i.imgur.com/7DfmxsN.png"},
+
+    {"hora": "01:00","nombre": "Traslado de Cliente VIP","recompensa": "$15600","imagen": "https://i.imgur.com/uKcQevk.png"},
+    {"hora": "12:00","nombre": "Traslado de Cliente VIP","recompensa": "$15600","imagen": "https://i.imgur.com/uKcQevk.png"},
+    {"hora": "17:00","nombre": "Traslado de Cliente VIP","recompensa": "$15600","imagen": "https://i.imgur.com/uKcQevk.png"},
+    {"hora": "22:00","nombre": "Traslado de Cliente VIP","recompensa": "$15600","imagen": "https://i.imgur.com/uKcQevk.png"},
+]
+
+@tasks.loop(minutes=1)
+async def check_actividades():
+    global ultima_hora_enviada, ultima_previa_enviada
+
+    ahora = datetime.now() + timedelta(hours=OFFSET)
+
+    hora = ahora.strftime("%H")
+    minuto = int(ahora.strftime("%M"))
+
+    clave = ahora.strftime("%Y-%m-%d %H")
+
+    canal = bot.get_channel(CANAL_ACTIVIDADES_ID)
+    if canal is None:
+        return
+
+    # 🔥 AVISO 5 MIN ANTES (solo 1 vez)
+    if minuto == 55 and ultima_previa_enviada != clave:
+        siguiente = (ahora + timedelta(hours=1)).strftime("%H")
+
+        for act in actividades:
+            if act["hora"].split(":")[0] == siguiente:
+                embed = discord.Embed(
+                    title="⏳ AZTENK TRANSPORT | PRÓXIMA ACTIVIDAD",
+                    description=f"🚀 {act['nombre']}\n🕒 {act['hora']}\n💰 {act['recompensa']}",
+                    color=COLOR
+                )
+                embed.set_image(url=act["imagen"])
+                await canal.send("@everyone ⏳ Se viene actividad", embed=embed)
+
+        ultima_previa_enviada = clave
+
+    # 🚖 ACTIVIDAD EXACTA
+    if minuto == 0 and ultima_hora_enviada != clave:
+        for act in actividades:
+            if act["hora"].split(":")[0] == hora:
+                embed = discord.Embed(
+                    title="🚖 AZTENK TRANSPORT | ACTIVIDAD DISPONIBLE",
+                    description=f"🔥 {act['nombre']}\n🕒 {act['hora']}\n💰 {act['recompensa']}",
+                    color=COLOR
+                )
+                embed.set_image(url=act["imagen"])
+                await canal.send("@everyone 🚨 Nueva actividad disponible", embed=embed)
+
+        ultima_hora_enviada = clave
+
+# ================= REGISTRO =================
+@bot.command()
+async def registrar(ctx):
+    check_reset_semanal()
+
+    if not ctx.message.attachments:
+        return
+
+    canal = bot.get_channel(CANAL_REGISTROS_ID)
+    uid = str(ctx.author.id)
+
+    registros_semana[uid] = registros_semana.get(uid, 0) + 1
+    guardar_datos()
+
+    file = await ctx.message.attachments[0].to_file()
+
+    embed = discord.Embed(
+        title="📸 AZTENK TRANSPORT | REGISTRO",
+        description=f"{ctx.author.mention}\n📊 Registros esta semana: {registros_semana[uid]}",
+        color=COLOR
+    )
+
+    embed.set_image(url=f"attachment://{ctx.message.attachments[0].filename}")
+
+    await canal.send(file=file, embed=embed)
+
+    try:
+        await ctx.message.delete()
+    except:
+        pass
+
+# ================= TICKETS =================
+class TicketView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Reclamar", style=discord.ButtonStyle.success, custom_id="claim")
+    async def claim(self, interaction, button):
+        cid = interaction.channel.id
+
+        if cid in tickets_reclamados:
+            user = interaction.guild.get_member(tickets_reclamados[cid])
+            return await interaction.response.send_message(f"Ya reclamado por {user.mention}", ephemeral=True)
+
+        tickets_reclamados[cid] = interaction.user.id
+        await interaction.channel.send(f"📌 Ticket reclamado por {interaction.user.mention}")
+        await interaction.response.send_message("Reclamado", ephemeral=True)
+
+    @discord.ui.button(label="Cerrar", style=discord.ButtonStyle.danger, custom_id="close")
+    async def close(self, interaction, button):
+        await interaction.response.send_modal(CerrarModal(interaction.channel))
+
+class CerrarModal(Modal):
+    def __init__(self, canal):
+        super().__init__(title="Cerrar Ticket")
+        self.canal = canal
+        self.razon = TextInput(label="Motivo")
+        self.add_item(self.razon)
+
+    async def on_submit(self, interaction):
+        for m in self.canal.members:
+            if not m.bot:
+                try:
+                    await m.send(f"📩 Tu ticket fue cerrado\n📝 Motivo: {self.razon.value}")
+                except:
+                    pass
+        await self.canal.delete()
+
+async def crear_ticket(interaction, tipo):
+    guild = interaction.guild
+    categoria = guild.get_channel(CATEGORIA_TICKETS_ID)
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        interaction.user: discord.PermissionOverwrite(view_channel=True)
+    }
+
+    for rid in STAFF_ROLES_IDS:
+        role = guild.get_role(rid)
+        if role:
+            overwrites[role] = discord.PermissionOverwrite(view_channel=True)
+
+    canal = await guild.create_text_channel(
+        f"ticket-{interaction.user.name}",
+        category=categoria,
+        overwrites=overwrites
+    )
+
+    menciones = " ".join([f"<@&{rid}>" for rid in STAFF_ROLES_IDS])
+
+    embed = discord.Embed(
+        title="🎫 AZTENK TRANSPORT | TICKET",
+        description=f"{interaction.user.mention}\n📂 Tipo: {tipo}\n⏳ Un staff responderá pronto",
+        color=COLOR
+    )
+
+    await canal.send(content=menciones, embed=embed, view=TicketView())
+    return canal
+
+# ================= POSTULACIÓN =================
+class PostulacionModal(Modal):
+    def __init__(self, canal_id):
+        super().__init__(title="📋 Postulación AZTENK")
+        self.canal_id = canal_id
+
+        self.nombre = TextInput(label="Nombre IC")
+        self.tiempo = TextInput(label="Años en la ciudad")
+        self.edad = TextInput(label="Edad")
+        self.exp = TextInput(label="Experiencia")
+        self.dispo = TextInput(label="Disponibilidad")
+
+        self.add_item(self.nombre)
+        self.add_item(self.tiempo)
+        self.add_item(self.edad)
+        self.add_item(self.exp)
+        self.add_item(self.dispo)
+
+    async def on_submit(self, interaction):
+        canal = interaction.guild.get_channel(self.canal_id)
+
+        embed = discord.Embed(
+            title="📋 NUEVA POSTULACIÓN",
+            description=(
+                f"👤 {self.nombre.value}\n"
+                f"🏙️ {self.tiempo.value}\n"
+                f"🎂 {self.edad.value}\n"
+                f"💼 {self.exp.value}\n"
+                f"⏰ {self.dispo.value}"
+            ),
+            color=COLOR
+        )
+
+        await canal.send(embed=embed)
+        await interaction.response.send_message("✅ Postulación enviada", ephemeral=True)
+
+# ================= PANEL =================
+class PanelView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Postulación", emoji="📋", style=discord.ButtonStyle.primary, custom_id="post")
+    async def post(self, interaction, button):
+        canal = await crear_ticket(interaction, "Postulación")
+        await interaction.response.send_modal(PostulacionModal(canal.id))
+
+    @discord.ui.button(label="Apelación", emoji="⚖️", style=discord.ButtonStyle.danger, custom_id="ape")
+    async def ape(self, interaction, button):
+        await crear_ticket(interaction, "Apelación")
+        await interaction.response.send_message("✅ Ticket creado", ephemeral=True)
+
+    @discord.ui.button(label="Dudas", emoji="❓", style=discord.ButtonStyle.secondary, custom_id="dudas")
+    async def dudas(self, interaction, button):
+        await crear_ticket(interaction, "Dudas")
+        await interaction.response.send_message("✅ Ticket creado", ephemeral=True)
+
+    @discord.ui.button(label="Contacto", emoji="📞", style=discord.ButtonStyle.success, custom_id="contacto")
+    async def contacto(self, interaction, button):
+        await crear_ticket(interaction, "Contacto")
+        await interaction.response.send_message("✅ Ticket creado", ephemeral=True)
+
+@bot.command()
+async def panel(ctx):
+    embed = discord.Embed(
+        title="🚖 AZTENK TRANSPORT | CENTRO DE SOPORTE",
+        description=(
+            "✨ Bienvenido al sistema oficial de soporte de **Aztenk Transport**\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+            "📋 **POSTULACIÓN AL STAFF**\n"
+            "┗ ¿Querés trabajar con nosotros?\n"
+            "┗ Completá el formulario y evaluaremos tu ingreso.\n\n"
+
+            "⚖️ **APELACIÓN DE SANCIÓN**\n"
+            "┗ ¿Fuiste sancionado?\n"
+            "┗ Podés solicitar una revisión de tu caso.\n\n"
+
+            "❓ **DUDAS GENERALES**\n"
+            "┗ Consultas sobre el servidor o sistemas.\n"
+            "┗ Te ayudamos con lo que necesites.\n\n"
+
+            "📞 **CONTACTO CON STAFF**\n"
+            "┗ Problemas, reportes o ayuda urgente.\n"
+            "┗ Atención directa con el equipo.\n\n"
+
+            "━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "⏱️ **Tiempo de respuesta:** lo antes posible\n"
+            "🚫 Evitá spam o múltiples tickets"
+        ),
+        color=COLOR
+    )
+
+    embed.set_footer(text="Aztenk Transport Support System • Estamos para ayudarte 🚀")
+
+    await ctx.send(embed=embed, view=PanelView())
+
+
+@bot.event
+async def on_ready():
+    print("✅ Bot listo")
+    check_actividades.start()
+    bot.add_view(PanelView())
+    bot.add_view(TicketView())
+
+bot.run(TOKEN)
